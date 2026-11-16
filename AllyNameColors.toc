@@ -1,0 +1,10 @@
+## Interface: 16001
+## Title: Ally Name Colors
+## Notes: Colors friendly player names on nameplates by party, raid, friend and guild. Settings in the EllesmereUI panel. /allycolors
+## Version: 1.0
+## IconTexture: Interface\AddOns\AllyNameColors\icon.tga
+## Category: |cffffb347Homebrew|r
+## OptionalDeps: EllesmereUI, EllesmereUINameplates
+## SavedVariables: AllyNameColorsDB
+
+AllyNameColors.lua

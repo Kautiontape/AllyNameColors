@@ -16,7 +16,7 @@ A player in more than one group gets the first match in that order. You can turn
 
 - The WoW Forever client (Interface 16001).
 - EllesmereUI with its Nameplates module. The settings page is in EllesmereUI's options panel.
-- In EllesmereUI, set Nameplates > Friendly > Name Color to **Class**. The Custom setting wraps the name in an inline color code, which overrides the color this addon sets. Ally Name Colors warns in chat once per session when it finds one.
+- It works with Nameplates > Friendly > Name Only on or off. With Name Only on, set Nameplates > Friendly > Name Color to **Class**. In that mode the Custom setting wraps the name in an inline color code, which overrides the color this addon sets. Ally Name Colors warns in chat once per session when it finds one. With the health bar shown, either Name Color setting works.
 
 ## Install
 
@@ -25,12 +25,14 @@ Put this folder in `World of Warcraft/_forever_/Interface/AddOns/` and name it e
 ## Use
 
 - `/allycolors` (short form `/anc`) opens the settings page: an on/off toggle and a color for each group, and a color or class color for everyone else.
-- `/anc check` prints each tracked plate's group and colors.
+- `/anc check` prints each tracked plate's group and colors. Health bar plates are marked `(bar)`.
 - `/anc reset` restores the defaults.
 
 ## How it works
 
 It colors Blizzard's name text on each friendly plate (`UnitFrame.name`) with `SetTextColor`, and hooks the color setters so it repaints when something else changes them. It never changes the text, so EllesmereUI's Name Only text ("60 | Name", with the level in its difficulty color) stays as EllesmereUI built it.
+
+With Name Only off, EllesmereUI hides Blizzard's plate and draws its own, with a health bar. Ally Name Colors finds those plates through EllesmereUI's global namespace (`EllesmereNameplates_NS.friendlyPlates`) and colors each plate's own name text the same way. It only recolors the name, not the bar. If a future EllesmereUI update moves those internals, this part switches itself off and Name Only mode keeps working.
 
 ## Tests
 

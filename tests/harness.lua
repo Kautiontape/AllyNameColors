@@ -69,6 +69,39 @@ EllesmereUI = {
     OpenPlugin = function(id) print("OpenPlugin " .. id) return true end,
 }
 
+-- EllesmereUI Nameplates stub: health bar mode's pooled friendly plates. Like
+-- the real SetUnit, the plate takes its unit before Ellesmere paints the name
+-- (class orange for players, NPC green for NPCs).
+local CLASS = { 1, 0.49, 0.04 }
+local NPCGREEN = { 0, 1, 0 }
+local barPlates, barPool = {}, {}
+EllesmereNameplates_NS = { friendlyPlates = barPlates }
+local ENS = EllesmereNameplates_NS
+local function BarSetUnit(plate, unit)
+    plate.unit = unit
+    plate.name:SetTextColor(unpack(units[unit].player and CLASS or NPCGREEN))
+end
+function ENS.TryAddFriendlyPlate(unit)
+    local u = units[unit]
+    if not u or u.hostile or barPlates[unit] then return end
+    local plate = table.remove(barPool) or { name = NewFS("") }
+    barPlates[unit] = plate
+    BarSetUnit(plate, unit)
+end
+function ENS.RemoveFriendlyPlate(unit)
+    local plate = barPlates[unit]
+    if not plate then return end
+    plate.unit = nil
+    barPlates[unit] = nil
+    barPool[#barPool + 1] = plate
+end
+local systemRuns = 0
+function ENS.UpdateFriendlyNameplateSystem() systemRuns = systemRuns + 1 end
+-- Ellesmere's own repaint of every live plate (a color setting changed).
+local function RefreshFriendlyColors()
+    for unit, plate in pairs(barPlates) do BarSetUnit(plate, unit) end
+end
+
 assert(loadfile(path))("AllyNameColors")
 local function Fire(ev, ...) frame.onEvent(frame, ev, ...) end
 Fire("ADDON_LOADED", "AllyNameColors")
@@ -155,6 +188,70 @@ assert(warnedOnce, "custom warning")
 -- No warning text for class mode string
 local before = #printed
 Add("nameplate9", { player = true, guid = "Player-y" }, "|cffffff0060|r | Bob")
+
+-- Health bar mode. Ellesmere's event handler calls ns.TryAddFriendlyPlate; the
+-- addon's own NAME_PLATE_UNIT_ADDED may come before or after it.
+local function AddBar(token, info, addonFirst)
+    units[token] = info
+    plates[token] = Plate(NewFS("hidden Blizzard name"))
+    if addonFirst then Fire("NAME_PLATE_UNIT_ADDED", token) end
+    ENS.TryAddFriendlyPlate(token)
+    if not addonFirst then Fire("NAME_PLATE_UNIT_ADDED", token) end
+    return barPlates[token]
+end
+local function RemoveBar(token)
+    ENS.RemoveFriendlyPlate(token)
+    Fire("NAME_PLATE_UNIT_REMOVED", token)
+    units[token], plates[token] = nil, nil
+end
+
+local bp = AddBar("nameplate11", { player = true, party = true, guid = "Player-bp", class = "DRUID" })
+assert(near(bp.name.tc, 0.667, 0.667, 1), "bar: party color over Ellesmere's class color")
+local bp2 = AddBar("nameplate12", { player = true, party = true, guid = "Player-bp2" }, true)
+assert(near(bp2.name.tc, 0.667, 0.667, 1), "bar: party color when the addon gets the event first")
+RefreshFriendlyColors()
+assert(near(bp.name.tc, 0.667, 0.667, 1), "bar: repaint after Ellesmere's repaint")
+
+-- The pooled plate goes to an NPC: Ellesmere's NPC color stands, nothing stale restored.
+RemoveBar("nameplate11")
+local npcPlate = AddBar("nameplate13", { player = false })
+assert(npcPlate == bp, "pool reuse")
+assert(near(npcPlate.name.tc, 0, 1, 0), "bar: NPC keeps Ellesmere's color")
+RefreshFriendlyColors()
+assert(near(npcPlate.name.tc, 0, 1, 0), "bar: NPC keeps Ellesmere's color after a repaint")
+-- ...then to a guild member: that player's group.
+RemoveBar("nameplate13")
+local gp = AddBar("nameplate14", { player = true, guild = true, guid = "Player-gp" })
+assert(gp == bp and near(gp.name.tc, 0.251, 1, 0.251), "bar: reused plate takes the new player's group")
+
+-- Leaving the party: the roster refresh repaints.
+units.nameplate12.party = false
+Fire("GROUP_ROSTER_UPDATE"); RunTimers()
+assert(near(bp2.name.tc, 0.857, 0.857, 0.857), "bar: left party -> others")
+
+-- Hostile while Ellesmere still holds the plate: Ellesmere's write stands.
+units.nameplate14.hostile = true
+gp.name:SetTextColor(unpack(CLASS))
+assert(near(gp.name.tc, 1, 0.49, 0.04), "bar: hostile unit not painted")
+units.nameplate14.hostile = false
+
+-- A plate added by Ellesmere's local sweep (mode switch): picked up once the
+-- system update it runs in has finished.
+units.nameplate15 = { player = true, party = true, guid = "Player-sw" }
+plates.nameplate15 = Plate(NewFS("hidden"))
+local sw = { name = NewFS(""), unit = "nameplate15" }
+barPlates.nameplate15 = sw
+sw.name:SetTextColor(unpack(CLASS))
+ENS.UpdateFriendlyNameplateSystem()
+assert(systemRuns == 1, "original system update ran")
+RunTimers()
+assert(near(sw.name.tc, 0.667, 0.667, 1), "bar: swept plate painted after the system update")
+
+-- A settings change reaches bar plates.
+AllyNameColorsDB.party.r, AllyNameColorsDB.party.g, AllyNameColorsDB.party.b = 0, 0, 1
+Fire("GROUP_ROSTER_UPDATE"); RunTimers()
+assert(near(sw.name.tc, 0, 0, 1), "bar: new party color")
+SlashCmdList.ALLYNAMECOLORS("check")
 
 -- Page build with recording widgets
 local rows = {}

@@ -1,12 +1,17 @@
 -- Ally Name Colors: colors the names on friendly player nameplates by who the
 -- player is to you (party, raid, friend, guild, everyone else).
 --
--- It paints Blizzard's own name FontString (UnitFrame.name), the one
--- EllesmereUI's Name Only mode writes its "60 | Name" text into, with
--- SetTextColor. It never changes the text, so Ellesmere's composition (level
--- in its difficulty color, title, guild line, brackets) stays as Ellesmere
--- built it. An inline color code outranks SetTextColor, so Ellesmere's
--- friendly Name Color must be Class, not Custom (Custom wraps the name in one).
+-- Name Only mode: it paints Blizzard's own name FontString (UnitFrame.name),
+-- the one EllesmereUI writes its "60 | Name" text into, with SetTextColor. It
+-- never changes the text, so Ellesmere's composition (level in its difficulty
+-- color, title, guild line, brackets) stays as Ellesmere built it. An inline
+-- color code outranks SetTextColor, so Ellesmere's friendly Name Color must be
+-- Class, not Custom (Custom wraps the name in one).
+--
+-- Health bar mode: Ellesmere hides Blizzard's frame and draws a plate of its
+-- own, so the name painted there is Ellesmere's plate.name (see "EllesmereUI
+-- bar plates" below). Ellesmere colors that one with SetTextColor in both Name
+-- Color settings, so Custom doesn't get in the way there.
 --
 -- Settings: a page of its own in the EllesmereUI panel (Plugin API), opened
 -- with /allycolors.
@@ -238,11 +243,75 @@ local function ScanPlates()
     end
 end
 
+-------------------------------------------------------------------------------
+--  EllesmereUI bar plates
+--
+--  With Name Only off, Ellesmere hides Blizzard's frame and draws its own
+--  plate from a pool: ns.friendlyPlates[unit], with the name on plate.name and
+--  the unit on plate.unit. Its namespace is global as EllesmereNameplates_NS.
+--  These are Ellesmere's internals, so when any of it is missing this path
+--  stays off and Name Only works as before.
+--
+--  The plate's unit is read live on every paint, so a pooled plate that moved
+--  on to someone else is handled without a release. Ellesmere's color is never
+--  put back by us: it repaints the plate itself on every SetUnit, and a plate
+--  showing someone we don't color (a friendly NPC) keeps Ellesmere's write.
+-------------------------------------------------------------------------------
+local barPlate = setmetatable({}, { __mode = "k" })   -- Ellesmere name FontString -> its plate
+
+local function EUI()
+    local ns = EllesmereNameplates_NS
+    if type(ns) == "table" and type(ns.friendlyPlates) == "table" then return ns end
+end
+
+-- The unit an Ellesmere plate shows right now, or nil once it's back in the pool.
+local function BarUnit(plate)
+    local ns = EUI()
+    local unit = plate.unit
+    if ns and type(unit) == "string" and ns.friendlyPlates[unit] == plate then return unit end
+end
+
+local function PaintBar(fs)
+    if painting then return end
+    local plate = barPlate[fs]
+    local unit = plate and BarUnit(plate)
+    if not unit or not IsAllyPlayer(unit) then return end
+    local r, g, b = ColorFor(unit)
+    painting = true
+    -- Ellesmere never touches this string's vertex color, so text color is all.
+    local ok, err = pcall(fs.SetTextColor, fs, r, g, b)
+    painting = false
+    if not ok then geterrorhandler()(err) end
+end
+
+-- Ellesmere repaints the name on spawn, color settings and roster changes.
+-- As with Blizzard's, the arguments are never read.
+local function OnBarColorWrite(fs)
+    if not painting then PaintBar(fs) end
+end
+
+local function TrackBar(plate)
+    local fs = type(plate) == "table" and plate.name
+    if type(fs) ~= "table" or type(fs.SetTextColor) ~= "function" then return end
+    if not barPlate[fs] then
+        barPlate[fs] = plate
+        hooksecurefunc(fs, "SetTextColor", OnBarColorWrite)
+    end
+    PaintBar(fs)
+end
+
+local function ScanBarPlates()
+    local ns = EUI()
+    if not ns then return end
+    for _, plate in pairs(ns.friendlyPlates) do TrackBar(plate) end
+end
+
 local function RefreshAll()
     for unit, fs in pairs(unitFS) do
         if fsUnit[fs] == unit then Paint(fs) end
     end
     ScanPlates()
+    ScanBarPlates()
 end
 
 -- Roster, guild and friend events come in bursts: one repaint per burst.
@@ -255,6 +324,29 @@ local function QueueRefresh()
         RefreshAll()
     end)
 end
+
+-- Ellesmere adds a bar plate through ns.TryAddFriendlyPlate on
+-- NAME_PLATE_UNIT_ADDED: hooking it paints the new plate right after
+-- Ellesmere's own paint, whichever order the two addons get the event in.
+-- Mode switches and zone changes add plates through Ellesmere's local copy,
+-- which the hook can't see, but they all run UpdateFriendlyNameplateSystem.
+local hookedEUI = false
+local function HookEllesmere()
+    if hookedEUI then return end
+    local ns = EUI()
+    if not ns then return end
+    hookedEUI = true
+    if type(ns.TryAddFriendlyPlate) == "function" then
+        hooksecurefunc(ns, "TryAddFriendlyPlate", function(unit)
+            local plate = type(unit) == "string" and ns.friendlyPlates[unit]
+            if plate then TrackBar(plate) end
+        end)
+    end
+    if type(ns.UpdateFriendlyNameplateSystem) == "function" then
+        hooksecurefunc(ns, "UpdateFriendlyNameplateSystem", QueueRefresh)
+    end
+end
+HookEllesmere()   -- the toc's OptionalDeps load Ellesmere first
 
 -------------------------------------------------------------------------------
 --  Saved settings
@@ -337,8 +429,9 @@ local function RegisterPlugin()
             {
                 key = "Colors",
                 title = "Name Colors",
-                description = "Name colors on friendly player nameplates. Someone in more than one group takes "
-                    .. "the first one listed. Needs Nameplates > Friendly > Name Color set to Class Color.",
+                description = "Name colors on friendly player nameplates, with or without the health bar. Someone "
+                    .. "in more than one group takes the first one listed. In Name Only mode this needs "
+                    .. "Nameplates > Friendly > Name Color set to Class Color.",
                 pages = { "Colors" },
                 buildPage = BuildPage,
                 onReset = ResetSettings,
@@ -353,8 +446,23 @@ RegisterPlugin()
 -------------------------------------------------------------------------------
 local function Check()
     local n = 0
+    local ns = EUI()
+    -- Bar plates first; a unit that has one hides its Blizzard name, so that
+    -- one isn't listed.
+    if ns then
+        for unit, plate in pairs(ns.friendlyPlates) do
+            local fs = type(plate) == "table" and plate.name
+            if fs and barPlate[fs] == plate and BarUnit(plate) == unit and IsAllyPlayer(unit) then
+                n = n + 1
+                local _, _, _, key = ColorFor(unit)
+                local tr, tg, tb = fs:GetTextColor()
+                local ok, line = pcall(string.format, "%s (bar): %s, text %.2f %.2f %.2f", unit, key, tr, tg, tb)
+                Chat(ok and line or (unit .. " (bar): " .. key))
+            end
+        end
+    end
     for unit, fs in pairs(unitFS) do
-        if fsUnit[fs] == unit then
+        if fsUnit[fs] == unit and not (ns and ns.friendlyPlates[unit]) then
             n = n + 1
             local _, _, _, key = ColorFor(unit)
             local tr, tg, tb = fs:GetTextColor()
@@ -411,6 +519,7 @@ f:SetScript("OnEvent", function(_, event, arg1)
     elseif event == "NAME_PLATE_UNIT_REMOVED" then
         Release(arg1)
     elseif event == "ADDON_LOADED" then
+        if arg1 == "EllesmereUINameplates" then HookEllesmere() end
         if arg1 == ADDON then
             AllyNameColorsDB = AllyNameColorsDB or {}
             db = FillDefaults(AllyNameColorsDB)

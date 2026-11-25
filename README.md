@@ -1,5 +1,9 @@
 # Ally Name Colors
 
+> **Archived in November 2026.** EllesmereUI 9.9.1 and later can color friendly nameplate names for friends, guild members, and party and raid members. Use the cog beside Name Color under Nameplates > Friendly Plates. It needs the Name Only style.
+>
+> EllesmereUI gives party and raid members one shared color, and it doesn't color names on health bar plates. This addon does both, but it is no longer maintained and later EllesmereUI updates may break it.
+
 A World of Warcraft Forever addon that colors the names on friendly player nameplates by who the player is to you. The default colors are the chat colors for each group:
 
 | Group | Default color |
